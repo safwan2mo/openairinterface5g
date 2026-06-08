@@ -181,13 +181,14 @@ static void nr_pusch_antenna_processing(void *arg)
       printf("Estimated delay = %i\n", delay->est_delay >> 1);
 #endif
 
+      ul_ch += delta;
       pilot_cnt = 0;
       for (int n = 0; n < 3 * nb_rb_pusch; n++) {
         // Channel interpolation
         for (int k_line = 0; k_line <= 1; k_line++) {
           // Apply delay
           int k = pilot_cnt << 1;
-          c16_t ch16 = c16mulShift(ul_ls_est[k], ul_delay_table[k], 8);
+          c16_t ch16 = c16mulShift(ul_ls_est[k], ul_delay_table[k + delta], 8);
 
 #ifdef DEBUG_PUSCH
           re_offset = (k0 + (n << 2) + (k_line << 1)) % symbolSize;
@@ -221,14 +222,14 @@ static void nr_pusch_antenna_processing(void *arg)
 
       // Revert delay
       pilot_cnt = 0;
-      ul_ch = &ul_ch_estimates[nl * num_sp_streams + antenna][symbol_offset];
+      ul_ch = &ul_ch_estimates[nl * num_sp_streams + antenna][symbol_offset + delta];
       int inv_delay_idx = get_delay_idx(-delay->est_delay, MAX_DELAY_COMP);
       c16_t *ul_inv_delay_table = frame_parms->delay_table[inv_delay_idx];
       for (int n = 0; n < 3 * nb_rb_pusch; n++) {
         for (int k_line = 0; k_line <= 1; k_line++) {
           int k = pilot_cnt << 1;
-          ul_ch[k] = c16mulShift(ul_ch[k], ul_inv_delay_table[k], 8);
-          ul_ch[k + 1] = c16mulShift(ul_ch[k + 1], ul_inv_delay_table[k + 1], 8);
+          ul_ch[k] = c16mulShift(ul_ch[k], ul_inv_delay_table[k + delta], 8);
+          ul_ch[k + 1] = c16mulShift(ul_ch[k + 1], ul_inv_delay_table[k + 1 + delta], 8);
           noise_amp2 += c16amp2(c16sub(ul_ls_est[k], ul_ch[k]));
           noise_amp2 += c16amp2(c16sub(ul_ls_est[k + 1], ul_ch[k + 1]));
 
@@ -239,6 +240,13 @@ static void nr_pusch_antenna_processing(void *arg)
           pilot_cnt++;
           nest_count += 2;
         }
+      }
+
+      // Extrapolate the channel after the shift
+      if (delta > 0) {
+        c16_t *ul_ch_base = &ul_ch_estimates[nl * num_sp_streams + antenna][symbol_offset];
+        for (int d = 0; d < delta; d++)
+          ul_ch_base[d] = ul_ch_base[delta];
       }
 
     } else if (pusch_pdu->dmrs_config_type == pusch_dmrs_type2
