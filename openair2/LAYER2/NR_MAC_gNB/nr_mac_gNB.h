@@ -427,6 +427,7 @@ typedef struct NR_pusch_dmrs {
   uint8_t num_dmrs_symb;
   uint16_t ul_dmrs_symb_pos;
   uint8_t num_dmrs_cdm_grps_no_data;
+  uint16_t dmrs_ports;
   nfapi_nr_dmrs_type_e dmrs_config_type;
   int dmrs_scrambling_id;
   int pusch_identity;
@@ -1097,6 +1098,10 @@ typedef int (*nr_ul_beam_select_fn)(NR_beam_info_t *beam_info,
 /// Custom: joint rank/TPMI search from H matrix, ML-based, etc.
 typedef void (*nr_ul_ri_tpmi_select_fn)(gNB_MAC_INST *mac, nr_ul_candidate_t *cands, int n_cand);
 
+// PUSCH CDM group and antenna port selection
+// Default: Allocates CDM groups 2, continuous antenna ports from 0 to Layers-1
+typedef void (*nr_ul_port_select_fn)(gNB_MAC_INST *mac, nr_ul_candidate_t *cands, int n_cand);
+
 /// UL TDA selection: picks TDA per candidate (default: same TDA for all), validates retx
 /// feasibility, drops infeasible cands (compact). Returns surviving cand count.
 /// Each surviving cand has sched_pusch.time_domain_allocation/tda_info and alloc_slbitmap populated. Retx cands have retx_rbSize
@@ -1232,6 +1237,7 @@ typedef struct gNB_MAC_INST_s {
 
   /// UL RI/TPMI + TDA selection + beam selection + MCS selection + RB allocation
   nr_ul_ri_tpmi_select_fn ul_ri_tpmi_select;
+  nr_ul_port_select_fn ul_port_select;
   nr_ul_tda_select_fn ul_tda_select;
   nr_ul_beam_select_fn ul_beam_select;
   nr_ul_mcs_select_fn ul_mcs_select;

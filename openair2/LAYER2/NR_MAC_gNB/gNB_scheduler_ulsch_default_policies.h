@@ -30,4 +30,6 @@ void nr_ul_mcs_select_default(const gNB_MAC_INST *mac, nr_ul_candidate_t *candid
 
 int nr_ul_proportional_fair(const nr_ul_sched_params_t *params, nr_ul_candidate_t *candidates, int n_candidates);
 
+void nr_ul_port_select_default(gNB_MAC_INST *mac, nr_ul_candidate_t *candidates, int n_candidates);
+
 #endif /* GNB_SCHEDULER_ULSCH_DEFAULT_POLICIES_H */

@@ -31,6 +31,34 @@ void nr_ul_ri_tpmi_select_default(gNB_MAC_INST *mac, nr_ul_candidate_t *cands, i
   }
 }
 
+// Default PUSCH CDM Group and antenna port allocation
+void nr_ul_port_select_default(gNB_MAC_INST *mac, nr_ul_candidate_t *cands, int n_cand)
+{
+  FOR_EACH_CANDIDATE(cand, cands, n_cand)
+  {
+    if (cand->skipped)
+      continue;
+
+    /* Retx: reuse the ports committed on the original transmission */
+    if (cand->is_retx) {
+      const NR_sched_pusch_t *retInfo = &cand->UE->UE_sched_ctrl.ul_harq_processes[cand->retx_harq_pid].sched_pusch;
+      cand->sched_pusch.dmrs_info.dmrs_ports = retInfo->dmrs_info.dmrs_ports;
+      cand->sched_pusch.dmrs_info.num_dmrs_cdm_grps_no_data = retInfo->dmrs_info.num_dmrs_cdm_grps_no_data;
+      continue;
+    }
+
+    int layers = cand->sched_pusch.nrOfLayers;
+    NR_UE_UL_BWP_t *bwp = &cand->UE->current_UL_BWP;
+    if (bwp->transform_precoding) {
+      int nrOfSymbols = cand->sched_pusch.tda_info.nrOfSymbols;
+      cand->sched_pusch.dmrs_info.num_dmrs_cdm_grps_no_data = (layers < 3 && nrOfSymbols <= 2) ? 1 : 2;
+    } else {
+      cand->sched_pusch.dmrs_info.num_dmrs_cdm_grps_no_data = 2;
+    }
+    cand->sched_pusch.dmrs_info.dmrs_ports = (1 << layers) - 1;
+  }
+}
+
 static NR_tda_info_t *get_new_tda_for_srs(gNB_MAC_INST *nrmac, const NR_tda_info_t *tda_info)
 {
   // by current design, the next TDA would be the one for SRS with one less symbol
@@ -294,8 +322,12 @@ int nr_ul_proportional_fair(const nr_ul_sched_params_t *params, nr_ul_candidate_
     }
 
     NR_UE_UL_BWP_t *current_BWP = &cand->UE->current_UL_BWP;
-    NR_pusch_dmrs_t dmrs_info =
-        get_ul_dmrs_params(params->scc, current_BWP, &cand->sched_pusch.tda_info, cand->sched_pusch.nrOfLayers);
+    NR_pusch_dmrs_t dmrs_info = get_ul_dmrs_params(params->scc,
+                                                   current_BWP,
+                                                   &cand->sched_pusch.tda_info,
+                                                   cand->sched_pusch.nrOfLayers,
+                                                   cand->sched_pusch.dmrs_info.dmrs_ports,
+                                                   cand->sched_pusch.dmrs_info.num_dmrs_cdm_grps_no_data);
     uint16_t Rt;
     uint8_t Qt;
     update_ul_ue_R_Qm(mcs, current_BWP->mcs_table, current_BWP->pusch_Config, &Rt, &Qt);
