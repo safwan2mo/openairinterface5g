@@ -145,6 +145,27 @@ void handle_meas_timers(NR_UE_RRC_INST_t *rrc)
         nr_timer_start(&l3_measurements->periodic_report_timer);
       }
     }
+
+    // TS 38.331 - 5.5.4.1: standalone periodical reportConfigs, one independent timer per measId
+    for (int meas_id = 0; meas_id < MAX_MEAS_ID; meas_id++) {
+      nr_periodic_meas_report_t *periodic = &nb->periodic_reports[meas_id];
+      if (!periodic->active)
+        continue;
+
+      bool expired = nr_timer_tick(&periodic->timer);
+      if (!expired || periodic->reports_sent >= periodic->max_reports)
+        continue;
+
+      rrc_ue_generate_periodic_measurementReport(nb, rrc->ue_id, meas_id, periodic->rs_type);
+      periodic->reports_sent++;
+
+      if (periodic->reports_sent < periodic->max_reports) {
+        nr_timer_setup(&periodic->timer, periodic->report_interval_ms, 10);
+        nr_timer_start(&periodic->timer);
+      } else {
+        periodic->active = false;
+      }
+    }
   }
 }
 

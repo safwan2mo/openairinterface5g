@@ -1208,11 +1208,13 @@ static bool nr_rrc_process_reconfiguration_v1530(NR_UE_RRC_INST_t *rrc, NR_RRCRe
   return dedicatedsib1;
 }
 
+static long get_measurement_report_interval_ms(NR_ReportInterval_t interval);
+
 static void handle_meas_reporting_remove(rrcPerNB_t *rrc, int id, NR_UE_Timers_Constants_t *timers)
 {
   // remove the measurement reporting entry for this measId if included
   asn1cFreeStruc(asn_DEF_NR_VarMeasReport, rrc->MeasReport[id]);
-  // TODO stop the periodical reporting timer or timer T321, whichever is running,
+  // stop the periodical reporting timer or timer T321, whichever is running,
   // and reset the associated information (e.g. timeToTrigger) for this measId
   nr_timer_stop(&timers->T321);
 
@@ -1223,6 +1225,9 @@ static void handle_meas_reporting_remove(rrcPerNB_t *rrc, int id, NR_UE_Timers_C
   l3_measurements->reports_sent = 0;
   l3_measurements->max_reports = 0;
   l3_measurements->report_interval_ms = 0;
+
+  nr_timer_stop(&rrc->periodic_reports[id].timer);
+  rrc->periodic_reports[id] = (nr_periodic_meas_report_t){0};
 }
 
 static void handle_measobj_remove(rrcPerNB_t *rrc, struct NR_MeasObjectToRemoveList *remove_list, NR_UE_Timers_Constants_t *timers)
@@ -1483,6 +1488,21 @@ static void handle_measid_addmod(rrcPerNB_t *rrc,
           }
         }
       }
+      // TS 38.331 - 5.5.4.1: periodical reporting starts as soon as the measId is configured,
+      // independently of any event condition, and repeats every reportInterval up to reportAmount times
+      else if (reportNR->reportType.present == NR_ReportConfigNR__reportType_PR_periodical) {
+        NR_PeriodicalReportConfig_t *periodicalConfig = reportNR->reportType.choice.periodical;
+        nr_periodic_meas_report_t *periodic = &rrc->periodic_reports[id];
+        periodic->rs_type = periodicalConfig->rsType;
+        periodic->reports_sent = 0;
+        periodic->max_reports = (periodicalConfig->reportAmount == NR_PeriodicalReportConfig__reportAmount_infinity)
+                                     ? INT_MAX
+                                     : (1 << periodicalConfig->reportAmount);
+        periodic->report_interval_ms = get_measurement_report_interval_ms(periodicalConfig->reportInterval);
+        nr_timer_setup(&periodic->timer, periodic->report_interval_ms, 10);
+        nr_timer_start(&periodic->timer);
+        periodic->active = true;
+      }
     }
   }
 }
@@ -1527,6 +1547,9 @@ static void nr_rrc_ue_process_measConfig(rrcPerNB_t *rrc,
 
 static void nr_rrc_ue_process_rrcReconfiguration(NR_UE_RRC_INST_t *rrc, int gNB_index, NR_RRCReconfiguration_t *reconfiguration)
 {
+  LOG_I(NR_RRC, "[UE %ld] Received RRCReconfiguration (gNB %d)\n", rrc->ue_id, gNB_index);
+  xer_fprint(stdout, &asn_DEF_NR_RRCReconfiguration, (void *)reconfiguration);
+
   rrcPerNB_t *rrcNB = rrc->perNB + gNB_index;
 
   switch (reconfiguration->criticalExtensions.present) {
@@ -3734,5 +3757,36 @@ void rrc_ue_generate_measurementReport(rrcPerNB_t *rrc, instance_t ue_id)
                                            sizeof(buffer));
 
   int srb_id = 1; // possibly TODO in SRB3 in some cases
+  nr_pdcp_data_req_srb(ue_id, srb_id, 0, size, buffer, deliver_pdu_srb_rlc, NULL);
+}
+
+// TS 38.331 - 5.5.4.1: generates a MeasurementReport for a standalone periodical reportConfig.
+// Unlike rrc_ue_generate_measurementReport() (event-triggered), the measId/rsType come from the
+// caller instead of the shared l3_measurements trigger state, since several periodical measIds
+// can be active concurrently. Only the RSRP quantity is reported (RSRQ/SINR are not encoded by
+// do_nrMeasurementReport_SA), and at most one neighbor cell is included, same as the event-triggered path.
+void rrc_ue_generate_periodic_measurementReport(rrcPerNB_t *rrc, instance_t ue_id, NR_MeasId_t meas_id, long rs_type)
+{
+  uint8_t buffer[NR_RRC_BUF_SIZE];
+  l3_measurements_t *l3m = &rrc->l3_measurements;
+  int rsrp_dBm = rs_type == NR_NR_RS_Type_ssb ? l3m->serving_cell.ss_rsrp_dBm.val : l3m->serving_cell.csi_rsrp_dBm.val;
+  int rsrp_index = get_rsrp_index(rsrp_dBm);
+  bool neighbor_cell_valid =
+      rs_type == NR_NR_RS_Type_ssb ? l3m->neighboring_cell[0].ss_rsrp_dBm.init : l3m->neighboring_cell[0].csi_rsrp_dBm.init;
+  int neighbor_rsrp_dBm =
+      rs_type == NR_NR_RS_Type_ssb ? l3m->neighboring_cell[0].ss_rsrp_dBm.val : l3m->neighboring_cell[0].csi_rsrp_dBm.val;
+  int neighbor_rsrp_index = get_rsrp_index(neighbor_rsrp_dBm);
+  uint8_t size = do_nrMeasurementReport_SA(meas_id,
+                                           NR_MeasTriggerQuantityOffset_PR_rsrp,
+                                           rs_type,
+                                           l3m->serving_cell.Nid_cell,
+                                           rsrp_index,
+                                           neighbor_cell_valid,
+                                           l3m->neighboring_cell[0].Nid_cell,
+                                           neighbor_rsrp_index,
+                                           buffer,
+                                           sizeof(buffer));
+
+  int srb_id = 1;
   nr_pdcp_data_req_srb(ue_id, srb_id, 0, size, buffer, deliver_pdu_srb_rlc, NULL);
 }

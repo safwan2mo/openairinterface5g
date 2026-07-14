@@ -1802,6 +1802,42 @@ static void process_Event_Based_Measurement_Report(gNB_RRC_INST *rrc,
   }
 }
 
+// One-line summary of a MeasResults (serving cell + neighbors), styled like the
+// "UE <rnti>: ..." lines in dump_mac_stats(), instead of a full ASN.1 xer dump.
+static void log_measurement_report(const gNB_RRC_UE_t *UE, const NR_MeasResults_t *measResults)
+{
+  char buf[256];
+  char *p = buf;
+  const char *end = buf + sizeof(buf);
+  p += snprintf(p, end - p, "MeasurementReport measId %ld", measResults->measId);
+
+  for (int i = 0; i < measResults->measResultServingMOList.list.count; i++) {
+    const NR_MeasResultServMO_t *servMO = measResults->measResultServingMOList.list.array[i];
+    const NR_MeasResultNR_t *servCell = &servMO->measResultServingCell;
+    int pci = servCell->physCellId ? *servCell->physCellId : -1;
+    const NR_MeasQuantityResults_t *q = servCell->measResult.cellResults.resultsSSB_Cell
+                                             ? servCell->measResult.cellResults.resultsSSB_Cell
+                                             : servCell->measResult.cellResults.resultsCSI_RS_Cell;
+    if (q && q->rsrp)
+      p += snprintf(p, end - p, ", serving PCI %d RSRP %ld dBm", pci, *q->rsrp - 157);
+  }
+
+  if (measResults->measResultNeighCells
+      && measResults->measResultNeighCells->present == NR_MeasResults__measResultNeighCells_PR_measResultListNR) {
+    const NR_MeasResultListNR_t *neighList = measResults->measResultNeighCells->choice.measResultListNR;
+    for (int i = 0; i < neighList->list.count; i++) {
+      const NR_MeasResultNR_t *neigh = neighList->list.array[i];
+      int pci = neigh->physCellId ? *neigh->physCellId : -1;
+      const NR_MeasQuantityResults_t *q =
+          neigh->measResult.cellResults.resultsSSB_Cell ? neigh->measResult.cellResults.resultsSSB_Cell : neigh->measResult.cellResults.resultsCSI_RS_Cell;
+      if (q && q->rsrp)
+        p += snprintf(p, end - p, ", neighbor PCI %d RSRP %ld dBm", pci, *q->rsrp - 157);
+    }
+  }
+
+  LOG_UE_UL_EVENT(UE, "%s\n", buf);
+}
+
 static void rrc_gNB_process_MeasurementReport(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE, NR_MeasurementReport_t *measurementReport)
 {
   NR_MeasurementReport__criticalExtensions_PR p = measurementReport->criticalExtensions.present;
@@ -1811,8 +1847,7 @@ static void rrc_gNB_process_MeasurementReport(gNB_RRC_INST *rrc, gNB_RRC_UE_t *U
     return;
   }
 
-  if (LOG_DEBUGFLAG(DEBUG_ASN1))
-    xer_fprint(stdout, &asn_DEF_NR_MeasurementReport, (void *)measurementReport);
+  log_measurement_report(UE, &measurementReport->criticalExtensions.choice.measurementReport->measResults);
 
   NR_MeasConfig_t *meas_config = UE->measConfig;
   if (meas_config == NULL) {

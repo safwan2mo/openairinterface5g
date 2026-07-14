@@ -187,6 +187,17 @@ typedef struct l3_measurements_s {
   NR_timer_t periodic_report_timer;
 } l3_measurements_t;
 
+// TS 38.331 - 5.5.4.1: standalone periodical reporting for a given measId,
+// independent of the shared event-trigger state in l3_measurements_t
+typedef struct nr_periodic_meas_report_s {
+  bool active;
+  long rs_type;
+  int reports_sent;
+  int max_reports;
+  long report_interval_ms;
+  NR_timer_t timer;
+} nr_periodic_meas_report_t;
+
 typedef struct rrcPerNB {
   NR_MeasObjectToAddMod_t *MeasObj[MAX_MEAS_OBJ];
   NR_ReportConfigToAddMod_t *ReportConfig[MAX_MEAS_CONFIG];
@@ -197,6 +208,7 @@ typedef struct rrcPerNB {
   NR_UE_RRC_SI_INFO SInfo;
   NR_RSRP_Range_t s_measure;
   l3_measurements_t l3_measurements;
+  nr_periodic_meas_report_t periodic_reports[MAX_MEAS_ID];
 } rrcPerNB_t;
 
 typedef struct NR_UE_RRC_INST_s {
