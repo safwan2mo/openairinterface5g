@@ -125,6 +125,24 @@ void gNB_dlsch_ulsch_scheduler(module_id_t module_idP, frame_t frame, slot_t slo
   NR_ServingCellConfigCommon_t *scc = cc->ServingCellConfigCommon;
 
   NR_SCHED_LOCK(&gNB->sched_lock);
+
+  // Complete any DCI-driven BWP switch whose signaling DCI was already sent (see
+  // nr_rx_ra_sdu()/gNB_scheduler_ulsch.c and the DL/UL grant-build overrides in
+  // gNB_scheduler_dlsch.c/gNB_scheduler_ulsch.c). This MUST run here -- before any grant
+  // is built for this slot -- and not inline where the signal is sent: configure_UE_BWP()
+  // reallocates sched_ctrl state (HARQ lists, PUCCH resource list) that the in-flight
+  // grant which just sent the signal is still holding pointers into.
+  UE_iterator(gNB->UE_info.connected_ue_list, UE) {
+    // Requires BOTH directions signaled -- see pending_bwp_switch_id in nr_mac_gNB.h.
+    if (UE->pending_bwp_switch_id >= 0 && UE->bwp_switch_dl_signaled && UE->bwp_switch_ul_signaled) {
+      int target = UE->pending_bwp_switch_id;
+      UE->pending_bwp_switch_id = -1;
+      UE->bwp_switch_dl_signaled = false;
+      UE->bwp_switch_ul_signaled = false;
+      configure_UE_BWP(gNB, scc, UE, false, NR_SearchSpace__searchSpaceType_PR_ue_Specific, target, target);
+    }
+  }
+
   int slots_frame = gNB->frame_structure.numb_slots_frame;
   clear_beam_information(&gNB->beam_info, frame, slot, slots_frame);
 

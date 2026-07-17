@@ -1348,6 +1348,20 @@ void post_process_dlsch(gNB_MAC_INST *nr_mac,
                                                        0,
                                                        false);
 
+  if (current_BWP->dci_format == NR_DL_DCI_FORMAT_1_1 && UE->pending_bwp_switch_id >= 0 && !UE->bwp_switch_dl_signaled) {
+    // DL-only signal of a deferred BWP switch on the CURRENT BWP's CORESET; see the
+    // pending_bwp_switch_id comment in nr_mac_gNB.h for the full two-phase design.
+    LOG_A(NR_MAC,
+          "[%d.%d] RNTI %04x: signaling DCI-driven switch to DL-BWP %d via current DL-BWP %ld's CORESET\n",
+          frame,
+          slot,
+          rnti,
+          UE->pending_bwp_switch_id,
+          current_BWP->bwp_id);
+    dci_payload.bwp_indicator.val = UE->pending_bwp_switch_id;
+    UE->bwp_switch_dl_signaled = true;
+  }
+
   LOG_D(NR_MAC,
         "%4d.%2d DCI type 1 payload: freq_alloc %d (%d,%d,%d), "
         "nrOfLayers %d, time_alloc %d, vrb to prb %d, mcs %d tb_scaling %d ndi %d rv %d tpc %d ti %d\n",

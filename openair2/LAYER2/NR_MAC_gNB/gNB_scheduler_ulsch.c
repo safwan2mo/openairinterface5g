@@ -776,10 +776,27 @@ static void nr_rx_ra_sdu(const module_id_t mod_id,
     // we configure the UE using dedicated search space: In SA (CFRA used for
     // handover) and NSA (or do-ra), the UE has the full config already.
     int ss_type = NR_SearchSpace__searchSpaceType_PR_ue_Specific;
-    // Pass pre_ra_bwp_id explicitly so dl_bwp_switch >= 0 path sets DL_BWP->bwp_id
-    // and the resulting DCI bwp_indicator signals the BWP switch to the UE over the air.
     int bwp_id = (int)UE->pre_ra_bwp_id;
-    configure_UE_BWP(mac, scc, UE, false, ss_type, bwp_id, bwp_id);
+    if (bwp_id > 0) {
+      // The UE is still on BWP0 (it only left it for the RA-mandated PRACH detour) and has
+      // no way to know it should move to the dedicated BWP unless told over the air: jumping
+      // the gNB's own scheduling straight to the target BWP's CORESET here would just talk
+      // to empty air. Instead, keep scheduling via BWP0's own dedicated search space (now
+      // populated for exactly this purpose, see get_initial_SpCellConfig()) and mark the
+      // switch pending; the next grant built for this UE will carry bwp_indicator=bwp_id on
+      // BWP0's CORESET (TS 38.213 §12), and only once that has actually gone out does
+      // gNB_dlsch_ulsch_scheduler() move the gNB's own scheduling to the target BWP.
+      UE->pending_bwp_switch_id = bwp_id;
+      // Explicit reset, not redundant with UE creation: a second CFRA can re-enter this
+      // branch for the same UE object if a prior switch stalled (e.g. DL side never got a
+      // grant to signal on) and a later RA/CFRA followed -- without this, stale signaled
+      // flags from the abandoned attempt would corrupt this one's lockstep.
+      UE->bwp_switch_dl_signaled = false;
+      UE->bwp_switch_ul_signaled = false;
+      configure_UE_BWP(mac, scc, UE, false, ss_type, 0, 0);
+    } else {
+      configure_UE_BWP(mac, scc, UE, false, ss_type, bwp_id, bwp_id);
+    }
     // initialize ta_frame in case there is no Msg3 received
     UE->UE_sched_ctrl.ta_frame = (frame + 100) % MAX_FRAME_NUMBER;
     if (!transition_ra_connected_nr_ue(mac, UE)) {
@@ -2366,6 +2383,21 @@ void post_process_ulsch(gNB_MAC_INST *nr_mac,
                ss->searchSpaceType->present);
 
   cur_harq->sched_pusch.tpc_pusch = tpc;
+
+  if (current_BWP->dci_format == NR_UL_DCI_FORMAT_0_1 && UE->pending_bwp_switch_id >= 0 && !UE->bwp_switch_ul_signaled) {
+    // See the matching DL comment in gNB_scheduler_dlsch.c: override the tautological
+    // bwp_indicator with the deferred switch target while this grant is still built via
+    // the CURRENT BWP's CORESET. UL-only: does not imply the DL side has been signaled.
+    LOG_A(NR_MAC,
+          "[%d.%d] RNTI %04x: signaling DCI-driven switch to UL-BWP %d via current UL-BWP %ld's CORESET\n",
+          frame,
+          slot,
+          UE->rnti,
+          UE->pending_bwp_switch_id,
+          current_BWP->bwp_id);
+    uldci_payload.bwp_indicator.val = UE->pending_bwp_switch_id;
+    UE->bwp_switch_ul_signaled = true;
+  }
 
   fill_dci_pdu_rel15(&UE->sc_info,
                      &UE->current_DL_BWP,

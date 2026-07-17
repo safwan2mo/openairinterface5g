@@ -194,6 +194,11 @@ void reset_mac_inst(NR_UE_MAC_INST_t *nr_mac)
   // discard explicitly signalled contention-free Random Access Resources
   // TODO not sure what needs to be done here
 
+  // discard any half-signaled DCI-driven BWP switch (TS 38.213 §12) from a prior
+  // RA/HO attempt -- it must not be combined with a fresh signal after this reset
+  nr_mac->pending_dl_bwp_switch = -1;
+  nr_mac->pending_ul_bwp_switch = -1;
+
   // flush Msg3 buffer
   free_and_zero(nr_mac->ra.Msg3_buffer);
 
@@ -226,7 +231,7 @@ void reset_mac_inst(NR_UE_MAC_INST_t *nr_mac)
   // TODO beam failure procedure not implemented
 }
 
-static void release_dedicated_bwp0_config(NR_UE_MAC_INST_t *mac)
+void release_dedicated_bwp0_config(NR_UE_MAC_INST_t *mac)
 {
   if (mac->dl_BWPs.count > 0) {
     NR_UE_DL_BWP_t *bwp = mac->dl_BWPs.array[0];

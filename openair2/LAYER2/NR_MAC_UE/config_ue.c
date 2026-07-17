@@ -2154,9 +2154,33 @@ static void handle_reconfiguration_with_sync(NR_UE_MAC_INST_t *mac,
                                              int cc_idP,
                                              int hfn,
                                              int frame,
-                                             const NR_ReconfigurationWithSync_t *reconfWithSync)
+                                             const NR_ReconfigurationWithSync_t *reconfWithSync,
+                                             bool full_config)
 {
   reset_mac_inst(mac);
+
+  // TS 38.331 §5.3.5.11 "Full configuration": ordinary delta signalling would otherwise
+  // leave any additional (dedicated) BWP configured for the OLD cell lingering in
+  // mac->dl_BWPs/ul_BWPs -- meaningless at a new physical cell (different PRB/frequency
+  // layout, possibly a different bwp_Common entirely) but never explicitly released,
+  // because the target side (which set fullConfig, see rrc_gNB_encode_HandoverCommand())
+  // rebuilds masterCellGroup from scratch with no visibility into what the UE previously
+  // had. Left uncleared, the stale entry inflates sc_info.n_dl_bwp/n_ul_bwp
+  // (get_dl_bwp_structure()'s side effect derives them from array count) against the gNB's
+  // fresh count for a target without a dedicated BWP -- a DCI bwp_indicator bit-width
+  // mismatch that corrupts all subsequent DCI decode. Mirrors the release_dl_BWP/ul_BWP +
+  // release_dedicated_bwp0_config pattern already used for the analogous
+  // GO_TO_IDLE_KEEP_CAMPED case in release_mac_configuration() (main_ue_nr.c);
+  // configure_BWPs(), called right after this function returns, freshly repopulates BWP0
+  // and any BWPs the new cell does configure.
+  if (full_config) {
+    for (int i = mac->dl_BWPs.count - 1; i >= 1; i--)
+      release_dl_BWP(mac, i);
+    for (int i = mac->ul_BWPs.count - 1; i >= 1; i--)
+      release_ul_BWP(mac, i);
+    release_dedicated_bwp0_config(mac);
+  }
+
   mac->crnti = reconfWithSync->newUE_Identity;
   LOG_I(NR_MAC, "Configuring CRNTI %x\n", mac->crnti);
 
@@ -2967,7 +2991,8 @@ void nr_rrc_mac_config_req_cg(module_id_t module_id,
                               int hfn,
                               int frame,
                               NR_CellGroupConfig_t *cell_group_config,
-                              NR_UE_NR_Capability_t *ue_Capability)
+                              NR_UE_NR_Capability_t *ue_Capability,
+                              bool full_config)
 {
   LOG_I(MAC,"[UE %d] Applying CellGroupConfig from gNodeB\n", module_id);
   NR_UE_MAC_INST_t *mac = get_mac_inst(module_id);
@@ -2984,7 +3009,7 @@ void nr_rrc_mac_config_req_cg(module_id_t module_id,
     mac->servCellIndex = spCellConfig->servCellIndex ? *spCellConfig->servCellIndex : 0;
     if (spCellConfig->reconfigurationWithSync) {
       LOG_A(NR_MAC, "Received reconfigurationWithSync\n");
-      handle_reconfiguration_with_sync(mac, cc_idP, hfn, frame, spCellConfig->reconfigurationWithSync);
+      handle_reconfiguration_with_sync(mac, cc_idP, hfn, frame, spCellConfig->reconfigurationWithSync, full_config);
     }
     if (scd) {
       mac->tag_Id = scd->tag_Id;

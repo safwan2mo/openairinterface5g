@@ -58,6 +58,12 @@ typedef struct {
   bool masterKeyUpdate;
   int nextHopChainingCount;
   byte_array_t ue_cap;
+  // TS 38.331 RRCReconfiguration-v1530-IEs fullConfig: set for handover where the target
+  // side rebuilds masterCellGroup from scratch with no visibility into the UE's prior
+  // configuration (see rrc_gNB_encode_HandoverCommand()) -- per spec, ordinary delta
+  // signalling would otherwise require an explicit downlinkBWP-ToReleaseList/etc that the
+  // target cannot construct, and full configuration (5.3.5.11) is the defined alternative.
+  bool full_config;
 } nr_rrc_reconfig_param_t;
 
 /*

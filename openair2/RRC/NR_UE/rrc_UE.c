@@ -946,6 +946,8 @@ static void nr_rrc_process_reconfigurationWithSync(NR_UE_RRC_INST_t *rrc,
                                                    int gNB_index)
 {
   // perform Reconfiguration with sync according to 5.3.5.5.2
+  xer_fprint(stdout, &asn_DEF_NR_ReconfigurationWithSync, (const void *)reconfigurationWithSync);
+
   if (!rrc->as_security_activated && !(get_softmodem_params()->phy_test || get_softmodem_params()->do_ra)) {
     // if the AS security is not activated, perform the actions upon going to RRC_IDLE as specified in 5.3.11
     // with the release cause 'other' upon which the procedure ends
@@ -1085,7 +1087,6 @@ static bool nr_rrc_ue_process_masterCellGroup(NR_UE_RRC_INST_t *rrc,
                                               long *fullConfig,
                                               int gNB_index)
 {
-  AssertFatal(!fullConfig, "fullConfig not supported yet\n");
   NR_CellGroupConfig_t *cellGroupConfig = NULL;
   asn_dec_rval_t dec_rval = uper_decode(NULL,
                                         &asn_DEF_NR_CellGroupConfig, //might be added prefix later
@@ -1115,6 +1116,7 @@ static bool nr_rrc_ue_process_masterCellGroup(NR_UE_RRC_INST_t *rrc,
   mac_msg->UE_NR_Capability = rrc->UECap.UE_NR_Capability;
   mac_msg->hfn = rrc->current_hfn;
   mac_msg->frame = rrc->current_frame;
+  mac_msg->fullConfig = fullConfig != NULL;
   nr_rrc_send_msg_to_mac(rrc, &rrc_msg);
   return true;
 }
@@ -1122,8 +1124,11 @@ static bool nr_rrc_ue_process_masterCellGroup(NR_UE_RRC_INST_t *rrc,
 static bool nr_rrc_process_reconfiguration_v1530(NR_UE_RRC_INST_t *rrc, NR_RRCReconfiguration_v1530_IEs_t *rec_1530, int gNB_index)
 {
   if (rec_1530->fullConfig) {
-    // TODO perform the full configuration procedure as specified in 5.3.5.11 of 331
-    LOG_E(NR_RRC, "RRCReconfiguration includes fullConfig but this is not implemented yet\n");
+    // TS 38.331 §5.3.5.11 "Full configuration": handled at the MAC layer, scoped to
+    // releasing/rebuilding dedicated BWP config (see handle_reconfiguration_with_sync()
+    // in openair2/LAYER2/NR_MAC_UE/config_ue.c). Other full-configuration actions the
+    // spec lists (bearer/security context release and rebuild, etc.) are not implemented.
+    LOG_A(NR_RRC, "RRCReconfiguration includes fullConfig\n");
   }
   if (rec_1530->masterCellGroup) {
     bool ret = nr_rrc_ue_process_masterCellGroup(rrc, rec_1530->masterCellGroup, rec_1530->fullConfig, gNB_index);

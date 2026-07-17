@@ -443,6 +443,8 @@ typedef struct {
   NR_UE_NR_Capability_t *UE_NR_Capability;
   int hfn;
   int frame;
+  // TS 38.331 RRCReconfiguration-v1530-IEs fullConfig, TS 38.331 §5.3.5.11
+  bool fullConfig;
 } nr_mac_rrc_config_cg_t;
 typedef struct {
   NR_BCCH_BCH_Message_t *bcch;

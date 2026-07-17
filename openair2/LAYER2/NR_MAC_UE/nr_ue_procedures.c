@@ -3849,6 +3849,68 @@ static nr_dci_format_t nr_extract_dci_info(NR_UE_MAC_INST_t *mac,
   return format;
 }
 
+// TS 38.213 §12 / TS 38.212 §7.3.1: a DCI format 1_1 (resp. 0_1) carrying a bwp_indicator
+// that differs from the currently active DL (resp. UL) BWP is a network-initiated request
+// to switch the active BWP. Full spec behavior additionally allows this same DCI's own
+// resource-allocation fields to be sized/interpreted per the newly-indicated BWP; this
+// implementation takes the simpler, still-valid path our gNB side (nr_rx_ra_sdu() /
+// gNB_scheduler_dlsch.c / gNB_scheduler_ulsch.c) also assumes: the switching DCI's own
+// grant is scheduled entirely self-consistently on the BWP it was received on, and only
+// the *next* monitoring occasion moves to the new BWP. The caller therefore applies this
+// switch only AFTER nr_ue_process_dci() has finished interpreting the current DCI's own
+// fields against the still-active (old) BWP.
+// DL and UL are applied only once both agree on the same target (lockstep with the gNB's
+// own gating) -- see pending_dl_bwp_switch in mac_defs.h for why applying one direction
+// alone as soon as it's individually signaled is unsafe.
+static void nr_ue_process_dci_bwp_indicator(NR_UE_MAC_INST_t *mac,
+                                            frame_t frame,
+                                            int slot,
+                                            dci_pdu_rel15_t *dci,
+                                            nr_dci_format_t format)
+{
+  const int target_bwp_id = dci->bwp_indicator.val;
+  if (format == NR_DL_DCI_FORMAT_1_1) {
+    if (!mac->current_DL_BWP || target_bwp_id == mac->current_DL_BWP->bwp_id)
+      return;
+    if (!get_dl_bwp_structure(mac, target_bwp_id, false)) {
+      LOG_W(NR_MAC,
+            "[%d.%d] DCI 1_1 bwp_indicator %d does not match any configured DL BWP; ignoring switch\n",
+            frame,
+            slot,
+            target_bwp_id);
+      return;
+    }
+    mac->pending_dl_bwp_switch = target_bwp_id;
+  } else if (format == NR_UL_DCI_FORMAT_0_1) {
+    if (!mac->current_UL_BWP || target_bwp_id == mac->current_UL_BWP->bwp_id)
+      return;
+    if (!get_ul_bwp_structure(mac, target_bwp_id, false)) {
+      LOG_W(NR_MAC,
+            "[%d.%d] DCI 0_1 bwp_indicator %d does not match any configured UL BWP; ignoring switch\n",
+            frame,
+            slot,
+            target_bwp_id);
+      return;
+    }
+    mac->pending_ul_bwp_switch = target_bwp_id;
+  } else {
+    return;
+  }
+
+  if (mac->pending_dl_bwp_switch >= 0 && mac->pending_dl_bwp_switch == mac->pending_ul_bwp_switch) {
+    const int target = mac->pending_dl_bwp_switch;
+    NR_UE_DL_BWP_t *new_dl = get_dl_bwp_structure(mac, target, false);
+    NR_UE_UL_BWP_t *new_ul = get_ul_bwp_structure(mac, target, false);
+    if (new_dl && new_ul) {
+      mac->current_DL_BWP = new_dl;
+      mac->current_UL_BWP = new_ul;
+      LOG_A(NR_MAC, "[%d.%d] DCI-indicated switch to DL-BWP %d / UL-BWP %d\n", frame, slot, target, target);
+    }
+    mac->pending_dl_bwp_switch = -1;
+    mac->pending_ul_bwp_switch = -1;
+  }
+}
+
 nr_dci_format_t nr_ue_process_dci_indication_pdu(NR_UE_MAC_INST_t *mac, frame_t frame, int slot, fapi_nr_dci_indication_pdu_t *dci)
 {
   const nr_rnti_type_t rnti_type = get_rnti_type(mac, dci->rnti);
@@ -3869,6 +3931,9 @@ nr_dci_format_t nr_ue_process_dci_indication_pdu(NR_UE_MAC_INST_t *mac, frame_t 
     mac->stats.bad_dci++;
     return NR_DCI_NONE;
   }
+  // Apply any DCI-indicated BWP switch only after this DCI's own grant has been fully
+  // and self-consistently processed against the BWP it was actually received on.
+  nr_ue_process_dci_bwp_indicator(mac, frame, slot, &mac->def_dci_pdu_rel15[slot][format], format);
   return format;
 }
 

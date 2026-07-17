@@ -559,6 +559,17 @@ typedef struct NR_UE_MAC_INST_s {
   NR_SearchSpace_t *search_space_zero;
   NR_UE_DL_BWP_t *current_DL_BWP;
   NR_UE_UL_BWP_t *current_UL_BWP;
+  // TS 38.213 §12 DCI-driven BWP switch: a DCI 1_1's bwp_indicator only ever moves the DL
+  // BWP, a DCI 0_1's only the UL BWP -- but the gNB (gNB_dlsch_ulsch_scheduler()) only
+  // moves its own scheduling for either direction once BOTH have been signaled (it cannot
+  // move them independently, see configure_UE_BWP()). Applying one direction here as soon
+  // as it is individually signaled would desync BWPSize interpretation against gNB grants
+  // for the *other* direction, which are still being sized against the old BWP until the
+  // gNB's own switch completes. -1 = no signal seen yet for that direction; otherwise the
+  // target BWP id most recently signaled. Only applied (current_DL/UL_BWP actually moved)
+  // once both hold the same target.
+  int pending_dl_bwp_switch;
+  int pending_ul_bwp_switch;
 
   bool harq_ACK_SpatialBundlingPUCCH;
   bool harq_ACK_SpatialBundlingPUSCH;

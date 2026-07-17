@@ -844,6 +844,22 @@ typedef struct NR_UE_info {
   // BWP ID saved before a temporary switch to BWP0 for RA; passed explicitly as dl_bwp_switch
   // after CFRA so the DCI bwp_indicator carries the switch back to the UE over the air
   NR_BWP_Id_t pre_ra_bwp_id;
+  // TS 38.213 §12 DCI-driven BWP switch, deferred two-phase completion (post-CFRA HO):
+  // -1 = no switch pending. >=0 = target BWP id; the next DL and next UL grant built for
+  // this UE each override their own bwp_indicator to this value while still scheduling via
+  // the CURRENTLY active BWP's CORESET (so the UE, not yet switched, can actually receive
+  // the signal). DL BWP switch and UL BWP switch are signaled independently (DCI 1_1's
+  // bwp_indicator only ever moves the DL BWP, DCI 0_1's only the UL BWP -- one DCI cannot
+  // signal both), so bwp_switch_dl_signaled/bwp_switch_ul_signaled are tracked separately
+  // and BOTH must be set before it is safe to actually move the gNB's own scheduling
+  // (configure_UE_BWP() requires dl_bwp_switch == ul_bwp_switch -- it cannot switch one
+  // direction without the other). That call also reallocates sched_ctrl state (HARQ lists,
+  // PUCCH resource list) and must not run while any in-flight grant for this slot still
+  // holds pointers into the old state, so it is applied at the top of
+  // gNB_dlsch_ulsch_scheduler(), before any of that slot's grants are built.
+  int pending_bwp_switch_id;
+  bool bwp_switch_dl_signaled;
+  bool bwp_switch_ul_signaled;
 } NR_UE_info_t;
 
 typedef struct {

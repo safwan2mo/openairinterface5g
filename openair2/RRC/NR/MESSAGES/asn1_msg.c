@@ -564,6 +564,11 @@ static NR_RRCReconfiguration_IEs_t *build_RRCReconfiguration_IEs(const nr_rrc_re
       OCTET_STRING_fromBuf(ie->nonCriticalExtension->masterCellGroup, (const char *)params->cgc->buf, params->cgc->len);
     }
 
+    /* fullConfig, TS 38.331 5.3.5.11: set for handover, where masterCellGroup above was
+     * rebuilt from scratch at the target with no delta relative to the UE's prior config */
+    if (params->full_config)
+      asn1cCallocOne(ie->nonCriticalExtension->fullConfig, NR_RRCReconfiguration_v1530_IEs__fullConfig_true);
+
     /* masterKeyUpdate */
     if (params->masterKeyUpdate) {
       ie->nonCriticalExtension->masterKeyUpdate = calloc_or_fail(1, sizeof(*ie->nonCriticalExtension->masterKeyUpdate));

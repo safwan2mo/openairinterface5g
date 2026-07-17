@@ -400,6 +400,12 @@ static byte_array_t rrc_gNB_encode_HandoverCommand(gNB_RRC_UE_t *UE, gNB_RRC_INS
   params.security_config = sec;
   params.masterKeyUpdate = true;
   params.nextHopChainingCount = UE->nh_ncc;
+  // TS 38.331 5.3.5.11: the target side's masterCellGroup (set into params.cgc by
+  // get_RRCReconfiguration_params() -> UE->mcg) is rebuilt from scratch by the target
+  // DU/gNB with no visibility into the UE's prior dedicated config (e.g. dedicated BWPs)
+  // -- ordinary delta signalling would require an explicit ToReleaseList the target has no
+  // way to construct, so signal full configuration instead of letting stale config linger.
+  params.full_config = true;
   byte_array_t out = get_HandoverCommandMessage(&params);
 
   // Free remove lists in UE->measConfig

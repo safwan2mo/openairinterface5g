@@ -3134,6 +3134,7 @@ NR_UE_info_t *get_new_nr_ue_inst(uid_allocator_t *uia, rnti_t rnti, NR_CellGroup
   UE->rnti = rnti;
   UE->CellGroup = CellGroup;
   UE->ra = calloc(1, sizeof(*UE->ra));
+  UE->pending_bwp_switch_id = -1; // no DCI-signaled BWP switch pending
   NR_UE_sched_ctrl_t *sched_ctrl = &UE->UE_sched_ctrl;
   sched_ctrl->ta_update = 31;
 
