@@ -2890,11 +2890,11 @@ void configure_UE_BWP(gNB_MAC_INST *nr_mac,
     else
       ubwpd = servingCellConfig->uplinkConfig->initialUplinkBWP;
 
-    DL_BWP->pdsch_Config = bwpd->pdsch_Config->choice.setup;
-    UL_BWP->configuredGrantConfig = ubwpd->configuredGrantConfig ? ubwpd->configuredGrantConfig->choice.setup : NULL;
-    UL_BWP->pusch_Config = ubwpd->pusch_Config->choice.setup;
-    UL_BWP->pucch_Config = ubwpd->pucch_Config->choice.setup;
-    UL_BWP->srs_Config = ubwpd->srs_Config ? ubwpd->srs_Config->choice.setup : NULL;
+    DL_BWP->pdsch_Config = (bwpd && bwpd->pdsch_Config) ? bwpd->pdsch_Config->choice.setup : NULL;
+    UL_BWP->configuredGrantConfig = (ubwpd && ubwpd->configuredGrantConfig) ? ubwpd->configuredGrantConfig->choice.setup : NULL;
+    UL_BWP->pusch_Config = (ubwpd && ubwpd->pusch_Config) ? ubwpd->pusch_Config->choice.setup : NULL;
+    UL_BWP->pucch_Config = (ubwpd && ubwpd->pucch_Config) ? ubwpd->pucch_Config->choice.setup : NULL;
+    UL_BWP->srs_Config = (ubwpd && ubwpd->srs_Config) ? ubwpd->srs_Config->choice.setup : NULL;
   } else {
     DL_BWP->bwp_id = 0;
     UL_BWP->bwp_id = 0;
@@ -2958,6 +2958,9 @@ void configure_UE_BWP(gNB_MAC_INST *nr_mac,
   // as described in 5.15 of 38.321
   if (is_RA && !UL_BWP->rach_ConfigCommon) {
     LOG_I(NR_MAC, "Cannot perform RA in current BWP, switching to initial BWP\n");
+    // Save active BWP before switching to BWP0 for RA. Restored after CFRA via explicit
+    // dl_bwp_switch so the post-RA DCI bwp_indicator signals the switch back to the UE.
+    UE->pre_ra_bwp_id = UE->local_bwp_id;
     configure_UE_BWP(nr_mac, scc, UE, is_RA, target_ss, 0, 0);
     return;
   }

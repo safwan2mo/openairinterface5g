@@ -548,6 +548,7 @@ static NR_UE_info_t *create_new_UE(gNB_MAC_INST *mac, uint32_t cu_id, const NR_C
   if (is_SA) {
     cellGroupConfig = get_initial_cellGroupConfig(UE->uid, scc, &mac->radio_config, &mac->rlc_config, ssb_index);
     cellGroupConfig->spCellConfig->reconfigurationWithSync = get_reconfiguration_with_sync(UE->rnti, UE->uid, scc, mac->frame);
+    UE->local_bwp_id = mac->radio_config.first_active_bwp;
   } else {
     NR_UE_NR_Capability_t *cap = get_ue_nr_cap_from_cg_config_info(cgci);
     cellGroupConfig = get_default_secondaryCellGroup(scc, cap, 1, 1, configuration, UE->uid, ssb_index);

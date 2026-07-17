@@ -776,7 +776,10 @@ static void nr_rx_ra_sdu(const module_id_t mod_id,
     // we configure the UE using dedicated search space: In SA (CFRA used for
     // handover) and NSA (or do-ra), the UE has the full config already.
     int ss_type = NR_SearchSpace__searchSpaceType_PR_ue_Specific;
-    configure_UE_BWP(mac, scc, UE, false, ss_type, -1, -1);
+    // Pass pre_ra_bwp_id explicitly so dl_bwp_switch >= 0 path sets DL_BWP->bwp_id
+    // and the resulting DCI bwp_indicator signals the BWP switch to the UE over the air.
+    int bwp_id = (int)UE->pre_ra_bwp_id;
+    configure_UE_BWP(mac, scc, UE, false, ss_type, bwp_id, bwp_id);
     // initialize ta_frame in case there is no Msg3 received
     UE->UE_sched_ctrl.ta_frame = (frame + 100) % MAX_FRAME_NUMBER;
     if (!transition_ra_connected_nr_ue(mac, UE)) {
