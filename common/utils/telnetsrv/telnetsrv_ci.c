@@ -237,6 +237,69 @@ int rrc_gNB_trigger_n2_ho(char *buf, int debug, telnet_printfunc_t prnt)
   return 0;
 }
 
+/** @brief Trigger Xn handover for a UE (source gNB -> target gNB over the Xn interface)
+ *
+ *  Syntax: trigger_xn_ho <target_pci>,<ueId>
+ *   - target_pci : physical cell ID of the target cell, as listed in the source gNB's
+ *                  neighbour-config.conf (must resolve to a gNB reachable over Xn)
+ *   - ueId       : RRC UE ID of the UE to hand over (as reported by fetch_du_by_ue_id)
+ *
+ *  On success the source gNB starts the Xn Handover Preparation procedure:
+ *    XnAP HANDOVER REQUEST -> (target) HANDOVER REQUEST ACKNOWLEDGE -> RRCReconfiguration
+ *    to the UE -> (target) HANDOVER SUCCESS -> NGAP PATH SWITCH REQUEST towards the AMF.
+ *
+ *  NOTE: as of today OpenAirInterface only ships the XnAP ASN.1 codec + unit tests
+ *  (openair2/XNAP/lib, openair2/XNAP/tests). There is no XnAP SCTP task, no Xn interface
+ *  setup in the gNB and no RRC hook that sources/targets an Xn handover. This command is
+ *  therefore a wired-but-inert stub: it validates its arguments and the UE context, then
+ *  returns an explicit "not implemented" error so the CI scenario
+ *  (ci-scripts/xml_files/container_5g_rfsim_xn_ho.xml) is ready to be enabled the moment
+ *  the runtime path lands. When it does, replace the ERROR_MSG_RET below with a call to
+ *  the future rrc_gNB_mobility helper, e.g.:
+ *      nr_HO_Xn_trigger_telnet(RC.nrrrc[0], target_pci, UE->rrc_ue_id);
+ *  mirroring nr_HO_N2_trigger_telnet() / nr_HO_F1_trigger_telnet().
+ *
+ *  @param buf   Comma-separated input string: "<target_pci>,<ueId>"
+ *  @param debug Not used.
+ *  @param prnt  Callback for telnet output printing.
+ *  @return 0 on success; -1 on error. */
+int rrc_gNB_trigger_xn_ho(char *buf, int debug, telnet_printfunc_t prnt)
+{
+  UNUSED(debug);
+  if (!RC.nrrrc)
+    ERROR_MSG_RET("no RRC present, cannot trigger Xn handover\n");
+
+  if (!buf)
+    ERROR_MSG_RET("Invalid input. Expected format: trigger_xn_ho <target_pci>,<ueId>\n");
+
+  char *token = strtok(buf, ",");
+  if (!token)
+    ERROR_MSG_RET("Invalid input. Expected format: trigger_xn_ho <target_pci>,<ueId>\n");
+  uint32_t target_pci = strtol(token, NULL, 10);
+
+  token = strtok(NULL, ",");
+  if (!token)
+    ERROR_MSG_RET("Missing UE ID. Expected format: trigger_xn_ho <target_pci>,<ueId>\n");
+  uint32_t ueId = strtol(token, NULL, 10);
+
+  rrc_gNB_ue_context_t *ue_p = rrc_gNB_get_ue_context(RC.nrrrc[0], ueId);
+  if (!ue_p)
+    ERROR_MSG_RET("UE with id %u not found\n", ueId);
+  gNB_RRC_UE_t *UE = &ue_p->ue_context;
+
+  /* TODO(xn-ho): once the Xn runtime path exists, kick off Xn Handover Preparation here:
+   *   nr_HO_Xn_trigger_telnet(RC.nrrrc[0], target_pci, UE->rrc_ue_id);
+   *   prnt("RRC Xn handover triggered for UE %u toward target PCI %u\n", ueId, target_pci);
+   *   return 0;
+   */
+  prnt("Xn handover runtime path not implemented yet (UE %u -> target PCI %u): "
+       "only the XnAP codec (openair2/XNAP/lib) is available. See "
+       "ci-scripts/xml_files/container_5g_rfsim_xn_ho.xml\n",
+       UE->rrc_ue_id,
+       target_pci);
+  return -1;
+}
+
 int force_ul_failure(char *buf, int debug, telnet_printfunc_t prnt)
 {
   UNUSED(debug);
@@ -413,6 +476,7 @@ static telnetshell_cmddef_t cicmds[] = {
     {"get_current_bwp", "[rnti(hex,opt)]", get_current_bwp},
     {"trigger_bwp_switch", "newBWPId [rnti(hex,opt)]", trigger_bwp_switch},
     {"trigger_n2_ho", "[neighbour_pci(uint32_t),ueId(uint32_t)]", rrc_gNB_trigger_n2_ho},
+    {"trigger_xn_ho", "[target_pci(uint32_t),ueId(uint32_t)]", rrc_gNB_trigger_xn_ho},
     {"set_pusch_target_snr", "[somelongSNR(dec)]", set_pusch_target_snr},
     {"pdu_session_release", "[gNB_ue_ngap_id(int,opt)]", trigger_ngap_pdu_session_release},
     {"", "", NULL},
