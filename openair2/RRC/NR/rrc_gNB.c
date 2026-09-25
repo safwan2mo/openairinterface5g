@@ -1514,12 +1514,16 @@ static void f1u_dl_gtp_rollback(gNB_RRC_UE_t *UE)
 }
 
 /** @brief Resolve previous/old cell (UE identity physCellId): same cell, else neighbor
- * of current cell, else any cell with that PCI in this DU. */
+ * of current cell in this DU, else any cell with that PCI in this DU, else -- as a
+ * last resort, since PCI is only guaranteed unique within a DU, not CU-wide -- any
+ * cell with that PCI on any DU under this CU (re-establishment landing on a DU with
+ * no configured neighbour relation to the previous cell). */
 static const nr_rrc_cell_container_t *get_previous_cell_by_pci_in_du(gNB_RRC_INST *rrc,
                                                                      const nr_rrc_cell_container_t *current_cell,
                                                                      const nr_rrc_du_container_t *du,
                                                                      uint16_t pci)
 {
+  LOG_W(NR_RRC, "Searching for previous cell with PCI %d in DU (assoc_id %d) and current_cell pci %d\n", pci, du->assoc_id, current_cell->info.pci);
   if (current_cell->info.pci == pci)
     return current_cell;
 
@@ -1531,8 +1535,23 @@ static const nr_rrc_cell_container_t *get_previous_cell_by_pci_in_du(gNB_RRC_INS
       if (c != NULL && c->assoc_id == du->assoc_id)
         return c;
     }
+  } else {
+    LOG_W(NR_RRC, "No neighbour cell configuration found for current cell %ld\n", current_cell->info.cell_id);
   }
-  return rrc_get_cell_by_pci_for_du(&du->cells, pci);
+
+  nr_rrc_cell_container_t *du_cell = rrc_get_cell_by_pci_for_du(&du->cells, pci);
+  if (du_cell != NULL)
+    return du_cell;
+
+  // Last resort: no declared neighbour relation, and this DU doesn't have it locally
+  // either -- scan all cells CU-wide, across every DU (e.g. re-establishment on a DU
+  // that isn't configured as a neighbour of the previous cell, TS 38.331 5.3.7.4).
+  nr_rrc_cell_container_t *c;
+  RB_FOREACH(c, rrc_cell_tree, &rrc->cells) {
+    if (c->info.pci == pci)
+      return c;
+  }
+  return NULL;
 }
 
 /** @brief Process RRCReestablishmentRequest on CCCH (TS 38.331 clause 5.3.7.4).
@@ -1589,6 +1608,9 @@ static void rrc_handle_RRCReestablishmentRequest(gNB_RRC_INST *rrc,
           msg->nr_cellid,
           assoc_id);
     return;
+  } else {
+    if (current_cell->info.pci != physCellId) 
+      LOG_W(NR_RRC, "Reestablishment request received (PCI %d) and UE was attached to cell %ld\n", current_cell->info.pci, physCellId);
   }
 
   if (current_cell->mtc == NULL) {
@@ -1600,10 +1622,11 @@ static void rrc_handle_RRCReestablishmentRequest(gNB_RRC_INST *rrc,
     goto fallback_rrc_setup;
   }
 
+  // get_previous_cell_by_pci_in_du() now searches CU-wide (any DU), not just this one --
+  // NULL here means the PCI is genuinely unknown to this CU, not just "on another DU".
   const nr_rrc_cell_container_t *cell = get_previous_cell_by_pci_in_du(rrc, current_cell, du, (uint16_t)physCellId);
   if (cell == NULL) {
     LOG_E(NR_RRC, "received CCCH message, but no corresponding cell found for PCI %ld in DU (assoc_id %d)\n", physCellId, assoc_id);
-    return;
   }
 
   /* TS 38.331 §5.3.7.1: retrieve UE context (C-RNTI + physCellId): if it cannot be
@@ -1611,6 +1634,7 @@ static void rrc_handle_RRCReestablishmentRequest(gNB_RRC_INST *rrc,
   ue_context_p = rrc_gNB_get_ue_context_by_rnti(rrc, assoc_id, old_rnti);
   if (ue_context_p == NULL) {
     // Fallback 1: Try to find UE by RNTI only (re-establishment on different DU scenario)
+    LOG_W(NR_RRC, "UE context not found for RNTI %04x on DU (assoc_id %d)\n", old_rnti, assoc_id);
     ue_context_p = rrc_gNB_get_ue_context_by_rnti_any_du(rrc, old_rnti);
     if (ue_context_p == NULL) {
       // Fallback 2: Try to find UE by source cell (handover scenario)
@@ -1619,6 +1643,8 @@ static void rrc_handle_RRCReestablishmentRequest(gNB_RRC_INST *rrc,
         LOG_E(NR_RRC, "NR_RRCReestablishmentRequest without UE context, fallback to RRC setup\n");
         goto fallback_rrc_setup;
       }
+    } else {
+      LOG_W(NR_RRC, "UE context found for RNTI %04x on different DU\n", old_rnti);
     }
   }
   gNB_RRC_UE_t *UE = &ue_context_p->ue_context;
@@ -1668,7 +1694,7 @@ static void rrc_handle_RRCReestablishmentRequest(gNB_RRC_INST *rrc,
     bool success = cu_update_f1_ue_data(UE->rrc_ue_id, &ue_data);
     DevAssert(success);
     nr_rrc_finalize_ho(UE);
-  } else if (physCellId != cell->info.pci) {
+  } else if (physCellId != current_cell->info.pci) {
     /* Check if this is a different DU scenario or "too fast movement" scenario */
     if (assoc_id != ue_data.du_assoc_id) {
       /* Different DU scenario - physCellId differs because UE is re-establishing on a different DU.
@@ -1680,7 +1706,7 @@ static void rrc_handle_RRCReestablishmentRequest(gNB_RRC_INST *rrc,
             "UE %d: Re-establishment on different DU (physCellId %ld from old cell != %d from new DU, du_assoc_id %d -> %d)\n",
             UE->rrc_ue_id,
             physCellId,
-            cell->info.pci,
+            current_cell->info.pci,
             ue_data.du_assoc_id,
             assoc_id);
 
@@ -1719,7 +1745,7 @@ static void rrc_handle_RRCReestablishmentRequest(gNB_RRC_INST *rrc,
       LOG_I(NR_RRC,
             "RRC Reestablishment Request from different physCellId (%ld) than current physCellId (%d), fallback to RRC setup\n",
             physCellId,
-            cell->info.pci);
+            current_cell->info.pci);
       ngap_cause = NGAP_CAUSE_RADIO_NETWORK_RELEASE_DUE_TO_NGRAN_GENERATED_REASON;
       goto fallback_rrc_setup;
     }
@@ -1730,11 +1756,15 @@ static void rrc_handle_RRCReestablishmentRequest(gNB_RRC_INST *rrc,
   // update with new RNTI, and update secondary UE association
   UE->rnti = msg->crnti;
 
-  /* Update PCell in serving_cells array */
-  DevAssert(cell->info.cell_id == msg->nr_cellid);
-  added = rrc_update_ue_pcell(UE, cell);
+  /* Update PCell in serving_cells array: this must be current_cell (where the
+   * RRCReestablishmentRequest actually arrived), not `cell` (the previous cell
+   * resolved from the request's physCellId) -- those two can now legitimately
+   * differ (cross-DU reestablishment), and only current_cell can carry the
+   * RRCReestablishment response over F1AP. */
+  DevAssert(current_cell->info.cell_id == msg->nr_cellid);
+  added = rrc_update_ue_pcell(UE, current_cell);
   if (added == NULL) {
-    LOG_E(NR_RRC, "Reestablishment: failed to add PCell (cell %ld)\n", cell->info.cell_id);
+    LOG_E(NR_RRC, "Reestablishment: failed to add PCell (cell %ld)\n", current_cell->info.cell_id);
     return;
   }
 
@@ -1742,7 +1772,7 @@ static void rrc_handle_RRCReestablishmentRequest(gNB_RRC_INST *rrc,
   bool success = cu_update_f1_ue_data(UE->rrc_ue_id, &ue_data);
   DevAssert(success);
 
-  rrc_gNB_generate_RRCReestablishment(ue_context_p, old_rnti, cell);
+  rrc_gNB_generate_RRCReestablishment(ue_context_p, old_rnti, current_cell);
   return;
 
 fallback_rrc_setup:
@@ -2894,7 +2924,10 @@ static void rrc_CU_process_ue_context_release_request(MessageDef *msg_p, sctp_as
   }
 
   /* TODO: marshall types correctly */
-  LOG_I(NR_RRC, "received UE Context Release Request for UE %u, forwarding to AMF\n", req->gNB_CU_ue_id);
+  LOG_I(NR_RRC,
+        "received UE Context Release Request for UE %u from DU (assoc_id %d), forwarding to AMF\n",
+        req->gNB_CU_ue_id,
+        assoc_id);
   ngap_cause_t cause = {.type = NGAP_CAUSE_RADIO_NETWORK, .value = NGAP_CAUSE_RADIO_NETWORK_RADIO_CONNECTION_WITH_UE_LOST};
   rrc_gNB_send_NGAP_UE_CONTEXT_RELEASE_REQ(instance, ue_context_p, cause);
 }
