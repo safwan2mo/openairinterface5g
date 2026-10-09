@@ -1,0 +1,394 @@
+<!-- SPDX-License-Identifier: LicenseRef-CSSL-1.0 -->
+
+<!--
+  Xn handover (inter-gNB, Xn interface), rfsim, 5x ping-pong between two gNBs.
+
+  Deployment: ci-scripts/yaml_files/5g_rfsimulator_xn_ho/docker-compose.yaml
+    Open5GS 5GC (NGAP Path Switch is not supported by the OAI 5GC) + two gNBs
+    in CU-CP/CU-UP/DU split, peered over Xn:
+      gNB-0  gNB_ID 0xe00  PCI 0  CU-CP 192.168.71.150  DU 192.168.71.171 (gNB_DU_ID 3584)
+      gNB-1  gNB_ID 0xb00  PCI 1  CU-CP 192.168.71.180  DU 192.168.71.182 (gNB_DU_ID 1234)
+    one rfsim NR-UE (192.168.71.190), telnet CI shell "ci" on CU-CP :9090.
+
+  Each hop: "ci trigger_xn_ho <target PCI>,<UE id>" on the source CU-CP, then
+  check_xn_ho.sh checks every step in the CU-CP logs:
+    XnAP Handover Request/Ack, RRCReconfiguration (HO command), SN Status Transfer,
+    RRCReconfigurationComplete, NGAP Path Switch Request/Ack, XnAP UE Context Release.
+  The UE then has to be on the target DU, and ping/iperf have to pass.
+-->
+
+<testCaseList>
+  <htmlTabRef>rfsim-5gnr-xn-ho</htmlTabRef>
+  <htmlTabName>SA TDD Xn Handover</htmlTabName>
+  <htmlTabIcon>wrench</htmlTabIcon>
+
+  <testCase>
+    <class>Pull_Local_Registry</class>
+    <desc>Pull Images from Local Registry</desc>
+    <node>localhost</node>
+    <images>oai-gnb-asan oai-nr-cuup-asan oai-nr-ue-asan</images>
+  </testCase>
+
+  <testCase>
+    <class>Create_Workspace</class>
+    <desc>Create new Workspace</desc>
+    <node>localhost</node>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy Open5GS 5G CoreNetwork</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_xn_ho</yaml_path>
+    <services>mongo open5gs oai-ext-dn</services>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI 5G gNB-0 (CU-CP/CU-UP/DU, PCI 0) + UE RFsim SA</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_xn_ho</yaml_path>
+    <services>oai-cucp-0 oai-cuup-0 oai-du-0 oai-nr-ue</services>
+  </testCase>
+
+  <testCase>
+    <class>Attach_UE</class>
+    <desc>Attach OAI UE (Wait for IP)</desc>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>UL ping ext-dn from NR-UE (on gNB-0)</desc>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 20 -i0.5</ping_args>
+    <ping_packetloss_threshold>80</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>Ping NR-UE from ext-dn (on gNB-0)</desc>
+    <id>rfsim5g_ext_dn</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ue</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 50 -i 0.25</ping_args>
+    <ping_packetloss_threshold>5</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Deploy_Object</class>
+    <desc>Deploy OAI 5G gNB-1 (CU-CP/CU-UP/DU, PCI 1) RFsim SA</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_xn_ho</yaml_path>
+    <services>oai-cucp-1 oai-cuup-1 oai-du-1</services>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>Xn Setup between gNB-0 and gNB-1</desc>
+    <node>localhost</node>
+    <command><![CDATA[for i in $(seq 1 20); do docker logs rfsim5g-oai-cucp-0 2>&1 | grep -q "setup complete" && docker logs rfsim5g-oai-cucp-1 2>&1 | grep -q "setup complete" && exit 0; sleep 1; done; exit 1]]></command>
+    <command_fail>yes</command_fail>
+  </testCase>
+
+  <!-- HOP 1: gNB-0 (PCI 0) -> gNB-1 (PCI 1) -->
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>HOP 1 - Trigger Xn Handover gNB-0 -> gNB-1</desc>
+    <node>localhost</node>
+    <command>echo ci trigger_xn_ho 1,1 | ncat 192.168.71.150 9090 | grep "Xn handover triggered for UE 1 towards neighbour PCI 1"</command>
+    <command_fail>yes</command_fail>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Script</class>
+    <desc>HOP 1 - Check Xn Handover steps gNB-0 -> gNB-1</desc>
+    <node>localhost</node>
+    <script>yaml_files/5g_rfsimulator_xn_ho/check_xn_ho.sh</script>
+    <args>rfsim5g-oai-cucp-0 rfsim5g-oai-cucp-1 1</args>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>HOP 1 - UE on gNB-1 DU (gNB_DU_ID 1234)</desc>
+    <node>localhost</node>
+    <command>echo ci fetch_du_by_ue_id | ncat 192.168.71.180 9090 | grep "gNB_DU_id 1234 is connected"</command>
+    <command_fail>yes</command_fail>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>HOP 1 - Ping NR-UE from ext-dn</desc>
+    <id>rfsim5g_ext_dn</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ue</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 50 -i 0.25</ping_args>
+    <ping_packetloss_threshold>5</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>HOP 1 - Ping ext-dn from NR-UE</desc>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 50 -i 0.25</ping_args>
+    <ping_packetloss_threshold>10</ping_packetloss_threshold>
+  </testCase>
+
+  <!-- HOP 2: gNB-1 (PCI 1) -> gNB-0 (PCI 0) -->
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>HOP 2 - Trigger Xn Handover gNB-1 -> gNB-0</desc>
+    <node>localhost</node>
+    <command>echo ci trigger_xn_ho 0,1 | ncat 192.168.71.180 9090 | grep "Xn handover triggered for UE 1 towards neighbour PCI 0"</command>
+    <command_fail>yes</command_fail>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Script</class>
+    <desc>HOP 2 - Check Xn Handover steps gNB-1 -> gNB-0</desc>
+    <node>localhost</node>
+    <script>yaml_files/5g_rfsimulator_xn_ho/check_xn_ho.sh</script>
+    <args>rfsim5g-oai-cucp-1 rfsim5g-oai-cucp-0 1</args>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>HOP 2 - UE on gNB-0 DU (gNB_DU_ID 3584)</desc>
+    <node>localhost</node>
+    <command>echo ci fetch_du_by_ue_id | ncat 192.168.71.150 9090 | grep "gNB_DU_id 3584 is connected"</command>
+    <command_fail>yes</command_fail>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>HOP 2 - Ping NR-UE from ext-dn</desc>
+    <id>rfsim5g_ext_dn</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ue</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 50 -i 0.25</ping_args>
+    <ping_packetloss_threshold>5</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>HOP 2 - Ping ext-dn from NR-UE</desc>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 50 -i 0.25</ping_args>
+    <ping_packetloss_threshold>10</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>HOP 2 - Iperf (DL/3Mbps/UDP)(20 sec)</desc>
+    <iperf_args>-u -b 3M -t 20 -R</iperf_args>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <iperf_packetloss_threshold>5</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>90</iperf_bitrate_threshold>
+  </testCase>
+
+  <!-- HOP 3: gNB-0 (PCI 0) -> gNB-1 (PCI 1) -->
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>HOP 3 - Trigger Xn Handover gNB-0 -> gNB-1</desc>
+    <node>localhost</node>
+    <command>echo ci trigger_xn_ho 1,1 | ncat 192.168.71.150 9090 | grep "Xn handover triggered for UE 1 towards neighbour PCI 1"</command>
+    <command_fail>yes</command_fail>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Script</class>
+    <desc>HOP 3 - Check Xn Handover steps gNB-0 -> gNB-1</desc>
+    <node>localhost</node>
+    <script>yaml_files/5g_rfsimulator_xn_ho/check_xn_ho.sh</script>
+    <args>rfsim5g-oai-cucp-0 rfsim5g-oai-cucp-1 2</args>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>HOP 3 - UE on gNB-1 DU (gNB_DU_ID 1234)</desc>
+    <node>localhost</node>
+    <command>echo ci fetch_du_by_ue_id | ncat 192.168.71.180 9090 | grep "gNB_DU_id 1234 is connected"</command>
+    <command_fail>yes</command_fail>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>HOP 3 - Ping NR-UE from ext-dn</desc>
+    <id>rfsim5g_ext_dn</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ue</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 50 -i 0.25</ping_args>
+    <ping_packetloss_threshold>5</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>HOP 3 - Ping ext-dn from NR-UE</desc>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 50 -i 0.25</ping_args>
+    <ping_packetloss_threshold>10</ping_packetloss_threshold>
+  </testCase>
+
+  <!-- HOP 4: gNB-1 (PCI 1) -> gNB-0 (PCI 0) -->
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>HOP 4 - Trigger Xn Handover gNB-1 -> gNB-0</desc>
+    <node>localhost</node>
+    <command>echo ci trigger_xn_ho 0,1 | ncat 192.168.71.180 9090 | grep "Xn handover triggered for UE 1 towards neighbour PCI 0"</command>
+    <command_fail>yes</command_fail>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Script</class>
+    <desc>HOP 4 - Check Xn Handover steps gNB-1 -> gNB-0</desc>
+    <node>localhost</node>
+    <script>yaml_files/5g_rfsimulator_xn_ho/check_xn_ho.sh</script>
+    <args>rfsim5g-oai-cucp-1 rfsim5g-oai-cucp-0 2</args>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>HOP 4 - UE on gNB-0 DU (gNB_DU_ID 3584)</desc>
+    <node>localhost</node>
+    <command>echo ci fetch_du_by_ue_id | ncat 192.168.71.150 9090 | grep "gNB_DU_id 3584 is connected"</command>
+    <command_fail>yes</command_fail>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>HOP 4 - Ping NR-UE from ext-dn</desc>
+    <id>rfsim5g_ext_dn</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ue</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 50 -i 0.25</ping_args>
+    <ping_packetloss_threshold>5</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>HOP 4 - Ping ext-dn from NR-UE</desc>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 50 -i 0.25</ping_args>
+    <ping_packetloss_threshold>10</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>HOP 4 - Iperf (UL/3Mbps/UDP)(20 sec)</desc>
+    <iperf_args>-u -b 3M -t 20</iperf_args>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <iperf_packetloss_threshold>5</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>90</iperf_bitrate_threshold>
+  </testCase>
+
+  <!-- HOP 5: gNB-0 (PCI 0) -> gNB-1 (PCI 1) -->
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>HOP 5 - Trigger Xn Handover gNB-0 -> gNB-1</desc>
+    <node>localhost</node>
+    <command>echo ci trigger_xn_ho 1,1 | ncat 192.168.71.150 9090 | grep "Xn handover triggered for UE 1 towards neighbour PCI 1"</command>
+    <command_fail>yes</command_fail>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Script</class>
+    <desc>HOP 5 - Check Xn Handover steps gNB-0 -> gNB-1</desc>
+    <node>localhost</node>
+    <script>yaml_files/5g_rfsimulator_xn_ho/check_xn_ho.sh</script>
+    <args>rfsim5g-oai-cucp-0 rfsim5g-oai-cucp-1 3</args>
+  </testCase>
+
+  <testCase>
+    <class>Custom_Command</class>
+    <desc>HOP 5 - UE on gNB-1 DU (gNB_DU_ID 1234)</desc>
+    <node>localhost</node>
+    <command>echo ci fetch_du_by_ue_id | ncat 192.168.71.180 9090 | grep "gNB_DU_id 1234 is connected"</command>
+    <command_fail>yes</command_fail>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>HOP 5 - Ping NR-UE from ext-dn</desc>
+    <id>rfsim5g_ext_dn</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ue</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 50 -i 0.25</ping_args>
+    <ping_packetloss_threshold>5</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Ping</class>
+    <desc>HOP 5 - Ping ext-dn from NR-UE</desc>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <ping_args>-c 50 -i 0.25</ping_args>
+    <ping_packetloss_threshold>10</ping_packetloss_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Iperf</class>
+    <desc>HOP 5 - Iperf (DL/3Mbps/UDP)(20 sec)</desc>
+    <iperf_args>-u -b 3M -t 20 -R</iperf_args>
+    <id>rfsim5g_ue</id>
+    <node>localhost</node>
+    <svr_id>rfsim5g_ext_dn</svr_id>
+    <svr_node>localhost</svr_node>
+    <iperf_packetloss_threshold>5</iperf_packetloss_threshold>
+    <iperf_bitrate_threshold>90</iperf_bitrate_threshold>
+  </testCase>
+
+  <testCase>
+    <class>Undeploy_Object</class>
+    <always_exec>true</always_exec>
+    <desc>Undeploy all OAI 5G stack</desc>
+    <node>localhost</node>
+    <yaml_path>ci-scripts/yaml_files/5g_rfsimulator_xn_ho</yaml_path>
+    <analysis>
+      <services>oai-cucp-0=EndsWithBye oai-cuup-0=EndsWithBye oai-du-0=RetxCheck=10,100,100,100 oai-du-0=EndsWithBye oai-cucp-1=EndsWithBye oai-cuup-1=EndsWithBye oai-du-1=RetxCheck=10,100,100,100 oai-du-1=EndsWithBye oai-nr-ue</services>
+    </analysis>
+  </testCase>
+
+  <testCase>
+    <class>Clean_Test_Server_Images</class>
+    <always_exec>true</always_exec>
+    <desc>Clean Test Images on Test Server</desc>
+    <node>localhost</node>
+    <images>oai-gnb-asan oai-nr-cuup-asan oai-nr-ue-asan</images>
+  </testCase>
+
+</testCaseList>
