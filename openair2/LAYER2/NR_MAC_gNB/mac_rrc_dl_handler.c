@@ -440,79 +440,61 @@ static NR_UE_NR_Capability_t *get_ue_nr_cap(int rnti, uint8_t *buf, uint32_t len
 }
 
 /* \brief return the source cell's master CellGroupConfig (still held by the UE) from
- * HandoverPreparationInformation.sourceConfig.rrcReconfiguration.masterCellGroup.
- * NULL if ho_prep_info is absent/malformed or carries no spCellConfigDedicated. */
-static NR_CellGroupConfig_t *get_source_dedicated_config_from_ho_prep_info(const uint8_t *buf, uint32_t len)
+ * sourceConfig.rrcReconfiguration.masterCellGroup, or NULL if absent/malformed or if it
+ * carries no spCellConfigDedicated. */
+static NR_CellGroupConfig_t *get_source_cellgroup(const NR_AS_Config_t *src)
 {
-  if (buf == NULL || len == 0)
-    return NULL;
-
-  NR_HandoverPreparationInformation_t *hpi = NULL;
-  asn_dec_rval_t rv = uper_decode_complete(NULL, &asn_DEF_NR_HandoverPreparationInformation, (void **)&hpi, buf, len);
-  if (rv.code != RC_OK || !hpi
-      || hpi->criticalExtensions.present != NR_HandoverPreparationInformation__criticalExtensions_PR_c1
-      || !hpi->criticalExtensions.choice.c1
-      || hpi->criticalExtensions.choice.c1->present
-             != NR_HandoverPreparationInformation__criticalExtensions__c1_PR_handoverPreparationInformation
-      || !hpi->criticalExtensions.choice.c1->choice.handoverPreparationInformation) {
-    LOG_W(NR_MAC, "cannot decode HandoverPreparationInformation, ignoring source dedicated BWP config\n");
-    ASN_STRUCT_FREE(asn_DEF_NR_HandoverPreparationInformation, hpi);
-    return NULL;
-  }
-
   NR_RRCReconfiguration_t *reconf = NULL;
   NR_CellGroupConfig_t *src_cg = NULL;
-  const NR_AS_Config_t *src = hpi->criticalExtensions.choice.c1->choice.handoverPreparationInformation->sourceConfig;
-  if (src) {
-    rv = uper_decode_complete(NULL, &asn_DEF_NR_RRCReconfiguration, (void **)&reconf, src->rrcReconfiguration.buf, src->rrcReconfiguration.size);
-    if (rv.code == RC_OK && reconf
-        && reconf->criticalExtensions.present == NR_RRCReconfiguration__criticalExtensions_PR_rrcReconfiguration
-        && reconf->criticalExtensions.choice.rrcReconfiguration
-        && reconf->criticalExtensions.choice.rrcReconfiguration->nonCriticalExtension
-        && reconf->criticalExtensions.choice.rrcReconfiguration->nonCriticalExtension->masterCellGroup) {
-      const OCTET_STRING_t *mcg = reconf->criticalExtensions.choice.rrcReconfiguration->nonCriticalExtension->masterCellGroup;
-      rv = uper_decode_complete(NULL, &asn_DEF_NR_CellGroupConfig, (void **)&src_cg, mcg->buf, mcg->size);
-      if (rv.code != RC_OK || !src_cg || !src_cg->spCellConfig || !src_cg->spCellConfig->spCellConfigDedicated) {
-        ASN_STRUCT_FREE(asn_DEF_NR_CellGroupConfig, src_cg);
-        src_cg = NULL;
-      }
+  asn_dec_rval_t rv = uper_decode_complete(NULL,
+                                           &asn_DEF_NR_RRCReconfiguration,
+                                           (void **)&reconf,
+                                           src->rrcReconfiguration.buf,
+                                           src->rrcReconfiguration.size);
+  if (rv.code == RC_OK && reconf
+      && reconf->criticalExtensions.present == NR_RRCReconfiguration__criticalExtensions_PR_rrcReconfiguration
+      && reconf->criticalExtensions.choice.rrcReconfiguration
+      && reconf->criticalExtensions.choice.rrcReconfiguration->nonCriticalExtension
+      && reconf->criticalExtensions.choice.rrcReconfiguration->nonCriticalExtension->masterCellGroup) {
+    const OCTET_STRING_t *mcg = reconf->criticalExtensions.choice.rrcReconfiguration->nonCriticalExtension->masterCellGroup;
+    rv = uper_decode_complete(NULL, &asn_DEF_NR_CellGroupConfig, (void **)&src_cg, mcg->buf, mcg->size);
+    if (rv.code != RC_OK || !src_cg || !src_cg->spCellConfig || !src_cg->spCellConfig->spCellConfigDedicated) {
+      ASN_STRUCT_FREE(asn_DEF_NR_CellGroupConfig, src_cg);
+      src_cg = NULL;
     }
   }
   if (!src_cg)
     LOG_W(NR_MAC, "HO: HandoverPreparationInformation carries no usable source spCellConfigDedicated\n");
-
   ASN_STRUCT_FREE(asn_DEF_NR_RRCReconfiguration, reconf);
-  ASN_STRUCT_FREE(asn_DEF_NR_HandoverPreparationInformation, hpi);
   return src_cg;
 }
 
-/* \brief return UE capabilties from HandoverPreparationInformation.
- *
- * The HandoverPreparationInformation contains more, but for the moment, let's
- * keep it simple and only handle that. The function asserts if other IEs are
- * present. */
-static NR_UE_NR_Capability_t *get_ue_nr_cap_from_ho_prep_info(uint8_t *buf, uint32_t len)
+/* \brief decode HandoverPreparationInformation once: return the UE capabilities
+ * in ue_cap and the source master CellGroupConfig (from sourceConfig) in src_cg.
+ * Either is set to NULL if absent or undecodable. */
+static void get_ho_prep_info(uint8_t *buf, uint32_t len, NR_UE_NR_Capability_t **ue_cap, NR_CellGroupConfig_t **src_cg)
 {
+  *ue_cap = NULL;
+  *src_cg = NULL;
   if (buf == NULL || len == 0)
-    return NULL;
+    return;
   NR_HandoverPreparationInformation_t *hpi = NULL;
   asn_dec_rval_t dec_rval = uper_decode_complete(NULL, &asn_DEF_NR_HandoverPreparationInformation, (void **)&hpi, buf, len);
   if (dec_rval.code != RC_OK) {
-    LOG_W(NR_MAC, "cannot decode HandoverPreparationInformation, ignoring capabilities\n");
-    return NULL;
+    LOG_W(NR_MAC, "cannot decode HandoverPreparationInformation, ignoring capabilities and source configuration\n");
+    return;
   }
-  NR_UE_NR_Capability_t *cap = NULL;
-  if (hpi->criticalExtensions.present != NR_HandoverPreparationInformation__criticalExtensions_PR_c1
-      || hpi->criticalExtensions.choice.c1 == NULL
-      || hpi->criticalExtensions.choice.c1->present
-             != NR_HandoverPreparationInformation__criticalExtensions__c1_PR_handoverPreparationInformation
-      || hpi->criticalExtensions.choice.c1->choice.handoverPreparationInformation == NULL) {
-  } else {
+  if (hpi->criticalExtensions.present == NR_HandoverPreparationInformation__criticalExtensions_PR_c1
+      && hpi->criticalExtensions.choice.c1 != NULL
+      && hpi->criticalExtensions.choice.c1->present
+             == NR_HandoverPreparationInformation__criticalExtensions__c1_PR_handoverPreparationInformation
+      && hpi->criticalExtensions.choice.c1->choice.handoverPreparationInformation != NULL) {
     const NR_HandoverPreparationInformation_IEs_t *hpi_ie = hpi->criticalExtensions.choice.c1->choice.handoverPreparationInformation;
-    cap = get_nr_cap(&hpi_ie->ue_CapabilityRAT_List);
+    *ue_cap = get_nr_cap(&hpi_ie->ue_CapabilityRAT_List);
+    if (hpi_ie->sourceConfig)
+      *src_cg = get_source_cellgroup(hpi_ie->sourceConfig);
   }
   ASN_STRUCT_FREE(asn_DEF_NR_HandoverPreparationInformation, hpi);
-  return cap;
 }
 
 NR_CG_ConfigInfo_t *get_cg_config_info(uint8_t *buf, uint32_t len)
@@ -744,8 +726,11 @@ void ue_context_setup_request(const f1ap_ue_context_setup_req_t *req)
   if (cu2du->cg_configinfo != NULL)
     cg_configinfo = get_cg_config_info(cu2du->cg_configinfo->buf, cu2du->cg_configinfo->len);
   NR_UE_NR_Capability_t *ue_cap = NULL;
+  /* Handover target: also fetch the source's master CellGroupConfig, so create_new_UE()
+   * below can release whatever dedicated BWP the target doesn't itself configure. */
+  NR_CellGroupConfig_t *source_cg = NULL;
   if (cu2du->ho_prep_info != NULL) {
-    ue_cap = get_ue_nr_cap_from_ho_prep_info(cu2du->ho_prep_info->buf, cu2du->ho_prep_info->len);
+    get_ho_prep_info(cu2du->ho_prep_info->buf, cu2du->ho_prep_info->len, &ue_cap, &source_cg);
   } else if (cu2du->ue_cap != NULL) {
     ue_cap = get_ue_nr_cap(*req->gNB_DU_ue_id, cu2du->ue_cap->buf, cu2du->ue_cap->len);
   }
@@ -753,11 +738,6 @@ void ue_context_setup_request(const f1ap_ue_context_setup_req_t *req)
   if (cu2du->meas_timing_config != NULL)
     mtc = get_nr_mtc(cu2du->meas_timing_config->buf, cu2du->meas_timing_config->len);
 
-  /* Handover target: fetch the source's master CellGroupConfig, so create_new_UE()
-   * below can release whatever dedicated BWP the target doesn't itself configure. */
-  NR_CellGroupConfig_t *source_cg = NULL;
-  if (cu2du->ho_prep_info != NULL)
-    source_cg = get_source_dedicated_config_from_ho_prep_info(cu2du->ho_prep_info->buf, cu2du->ho_prep_info->len);
   const NR_ServingCellConfig_t *source_dedicated = source_cg ? source_cg->spCellConfig->spCellConfigDedicated : NULL;
 
   /* inclusion of CG-ConfigInfo in SA mode is interpreted

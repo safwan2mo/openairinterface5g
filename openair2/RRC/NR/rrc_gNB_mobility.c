@@ -359,8 +359,6 @@ void nr_rrc_trigger_f1_ho(gNB_RRC_INST *rrc,
     return;
   }
 
-  /* HandoverPreparationInformation including sourceConfig (AS-Config): the target
-   * DU needs the source CellGroupConfig to build a correct delta RRCReconfiguration. */
   byte_array_t hpi = rrc_gNB_generate_HandoverPreparationInformation(rrc, ue);
   if (hpi.len <= 0) {
     free_byte_array(hpi);
