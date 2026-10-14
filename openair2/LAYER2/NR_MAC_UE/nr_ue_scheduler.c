@@ -1438,6 +1438,11 @@ static void nr_update_sr(NR_UE_MAC_INST_t *mac, bool BSRsent)
         // initiate a Random Access procedure on the SpCell and cancel the pending SR
         // if the MAC entity has no valid PUCCH resource configured for the pending SR
         // Wait until any pending Msg4/MsgB HARQ feedback PUCCH has been transmitted
+        LOG_W(NR_MAC,
+              "[UE %d] No PUCCH resource configured for pending SR ID %d (lcid %ld): falling back to RA\n",
+              mac->ue_id,
+              lc_info->sr_id,
+              (long)lc_info->lcid);
         sr->pending = false;
         sr->counter = 0;
         nr_timer_stop(&sr->prohibitTimer);
@@ -2627,6 +2632,9 @@ void nr_ue_ul_scheduler(NR_UE_MAC_INST_t *mac, nr_uplink_indication_t *ul_info)
             if (!nr_timer_is_active(&mac->time_alignment_timer) && mac->state == UE_CONNECTED
                 && !get_softmodem_params()->phy_test) {
               // UL data arrival during RRC_CONNECTED when UL synchronisation status is "non-synchronised"
+              LOG_W(NR_MAC,
+                    "[UE %d] UL data arrival while UL non-synchronised (time_alignment_timer not active): falling back to RA\n",
+                    mac->ue_id);
               release_ul_config(ulcfg_pdu, false);
               trigger_MAC_UE_RA(mac, NULL);
               return;

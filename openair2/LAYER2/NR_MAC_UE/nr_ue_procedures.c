@@ -3595,6 +3595,7 @@ static bool extract_10_c_rnti(NR_UE_MAC_INST_t *mac,
     EXTRACT_DCI_ITEM(dci_pdu_rel15->ss_pbch_index, 6);
     //  prach_mask_index  4 bits
     EXTRACT_DCI_ITEM(dci_pdu_rel15->prach_mask_index, 4);
+    LOG_W(NR_MAC, "[UE %d] Network-commanded RA via PDCCH order (preamble %u)\n", mac->ue_id, dci_pdu_rel15->ra_preamble_index);
     trigger_MAC_UE_RA(mac, dci_pdu_rel15);
     return true;
   } // end if
@@ -4451,6 +4452,9 @@ void nr_ue_send_sdu(NR_UE_MAC_INST_t *mac, nr_downlink_indication_t *dl_info, in
         nr_timer_start(mac->data_inactivity_timer);
       // DL data arrival during RRC_CONNECTED when UL synchronisation status is "non-synchronised"
       if (!nr_timer_is_active(&mac->time_alignment_timer) && mac->state == UE_CONNECTED && !get_softmodem_params()->phy_test) {
+        LOG_W(NR_MAC,
+              "[UE %d] DL data arrival while UL non-synchronised (time_alignment_timer not active): falling back to RA\n",
+              mac->ue_id);
         trigger_MAC_UE_RA(mac, NULL);
         break;
       }
